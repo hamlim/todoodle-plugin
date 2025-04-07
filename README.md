@@ -1,4 +1,10 @@
-# Obsidian Sample Plugin
+# todoodle-plugin
+
+More coming soon!
+
+---
+
+> Original Readme
 
 This is a sample plugin for Obsidian (https://obsidian.md).
 
