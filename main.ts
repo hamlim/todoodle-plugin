@@ -1,30 +1,137 @@
+// @ts-ignore
+import dayjs from "dayjs";
 import {
   type App,
   type Editor,
   type MarkdownView,
+  Modal,
   Notice,
-  //   Modal,
   Plugin,
   PluginSettingTab,
   Setting,
+  TFile,
 } from "obsidian";
+
+function formatTemplateString(
+  string: string,
+  replacements?: Record<string, string>,
+) {
+  return string.replace(/{{([^}}]+)}}/g, (match, pattern): string => {
+    // date or time
+    let replacementMatch = "";
+    let format = "";
+    if (pattern.includes(":")) {
+      [replacementMatch, format] = pattern.split(":");
+    } else {
+      replacementMatch = pattern;
+      if (replacementMatch === "date") {
+        format = "YYYY-MM-DD";
+      } else if (replacementMatch === "time") {
+        format = "hh-mm-ss";
+      } else {
+        // title or ID
+        return replacements?.[replacementMatch] ?? match;
+      }
+    }
+    return dayjs().format(format);
+  });
+}
 
 interface TodoodleSettings {
   tasksDir: string;
   taskFileName: string;
   taskFileTemplate: string;
   taskId: string;
+  appendFile: string;
+  appendTemplate: string;
 }
+
+let DEFAULT_TASK_TEMPLATE = `- [ ] [[{{fileName}}|{{taskId}}]] ➕ {{date:YYYY-MM-DD}}`;
 
 const DEFAULT_SETTINGS: TodoodleSettings = {
   tasksDir: "tasks",
-  taskFileName: "task-{{date}}--{{time}} - {{title}}.md",
+  taskFileName: "task-{{date:YYYY-MM-DD}}--{{time:hh-mm-ss}} - {{title}}.md",
   taskFileTemplate: "_templates/task.md",
   taskId: "TASK-{{id}}",
+  appendFile: "Tasks.md",
+  appendTemplate: DEFAULT_TASK_TEMPLATE,
 };
 
 export default class TodoodlePlugin extends Plugin {
   settings: TodoodleSettings;
+
+  async createTask(title: string) {
+    // Get the tasks directory
+    let tasksDir = this.app.vault.getAbstractFileByPath(this.settings.tasksDir);
+    if (!tasksDir) {
+      await this.app.vault.createFolder(this.settings.tasksDir);
+      tasksDir = this.app.vault.getAbstractFileByPath(this.settings.tasksDir);
+    }
+
+    // Count existing tasks to generate ID
+    let taskFiles = this.app.vault
+      .getFiles()
+      .filter(
+        (file) =>
+          file.path.startsWith(this.settings.tasksDir) &&
+          file.extension === "md",
+      );
+    let taskId = (taskFiles.length + 1).toString();
+
+    // Format the filename with the title
+    let fileName = formatTemplateString(this.settings.taskFileName, {
+      title,
+    });
+    let filePath = `${this.settings.tasksDir}/${fileName}`;
+
+    // Read and format the template
+    let templateFile = this.app.vault.getAbstractFileByPath(
+      this.settings.taskFileTemplate,
+    );
+    if (!templateFile || !(templateFile instanceof TFile)) {
+      throw new Error(
+        `Template file not found: ${this.settings.taskFileTemplate}`,
+      );
+    }
+
+    let hydratedTaskId = formatTemplateString(this.settings.taskId, {
+      id: taskId,
+    });
+
+    let templateContent = await this.app.vault.read(templateFile);
+    let taskContent = templateContent.replace(
+      new RegExp(this.settings.taskId, "g"),
+      hydratedTaskId,
+    );
+
+    // Create the task file
+    await this.app.vault.create(filePath, taskContent);
+
+    // append to a note
+    if (typeof this.settings.appendFile !== "undefined") {
+      let appendToFile = this.app.vault.getAbstractFileByPath(
+        this.settings.appendFile,
+      );
+      if (!appendToFile || !(appendToFile instanceof TFile)) {
+        throw new Error(
+          `Append to file not found: ${this.settings.appendFile}`,
+        );
+      }
+
+      let appendedTask = formatTemplateString(this.settings.appendTemplate, {
+        fileName,
+        taskId: hydratedTaskId,
+      });
+
+      new Notice(`Appending to ${appendToFile.path}: ${appendedTask}`);
+
+      console.log(`Appending to ${appendToFile.path}: ${appendedTask}`);
+
+      await this.app.vault.append(appendToFile, `\n${appendedTask}`);
+    }
+
+    new Notice(`Created task: ${title}`);
+  }
 
   async onload() {
     await this.loadSettings();
@@ -34,10 +141,14 @@ export default class TodoodlePlugin extends Plugin {
       "dice",
       "Todoodle",
       (evt: MouseEvent) => {
-        new Notice("Created task!");
-        // @TODO
-        // Called when the user clicks the icon.
-        // new Notice("This is a notice!");
+        new CreateTaskModal(this.app, async (title: string) => {
+          try {
+            await this.createTask(title);
+          } catch (err) {
+            console.error(`[todoodle]: ${err.message}`);
+            new Notice(`Todoodle Error: ${err.message}`);
+          }
+        }).open();
       },
     );
     // Perform additional things with the ribbon
@@ -59,11 +170,16 @@ export default class TodoodlePlugin extends Plugin {
     this.addCommand({
       id: "todoodle-create-task",
       name: "Create task",
-      editorCallback: (editor: Editor, view: MarkdownView) => {
-        new Notice("Created task!");
-        // @TODO
-        // console.log(editor.getSelection());
-        // editor.replaceSelection("Sample Editor Command");
+      //   editorCallback: (editor: Editor, view: MarkdownView) => {
+      callback: () => {
+        new CreateTaskModal(this.app, async (title: string) => {
+          try {
+            await this.createTask(title);
+          } catch (err) {
+            console.error(`[todoodle]: ${err.message}`);
+            new Notice(`Todoodle Error: ${err.message}`);
+          }
+        }).open();
       },
     });
     // This adds a complex command that can check whether the current state of the app allows execution of the command
@@ -105,29 +221,18 @@ export default class TodoodlePlugin extends Plugin {
   onunload() {}
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    let loadedSettings = await this.loadData();
+    this.settings = {
+      ...DEFAULT_SETTINGS,
+      ...loadedSettings,
+    };
   }
 
   async saveSettings() {
     await this.saveData(this.settings);
   }
 }
-
-// class SampleModal extends Modal {
-//   constructor(app: App) {
-//     super(app);
-//   }
-
-//   onOpen() {
-//     const { contentEl } = this;
-//     contentEl.setText("Woah!");
-//   }
-
-//   onClose() {
-//     const { contentEl } = this;
-//     contentEl.empty();
-//   }
-// }
 
 class TodoodleSettingTab extends PluginSettingTab {
   plugin: TodoodlePlugin;
@@ -220,5 +325,98 @@ class TodoodleSettingTab extends PluginSettingTab {
             await this.plugin.saveSettings();
           }),
       );
+
+    containerEl.createEl("h3", {
+      text: "Append to file",
+    });
+
+    new Setting(containerEl)
+      .setName("Append to file")
+      .setDesc("The file to append the task to (defaults to 'Tasks.md')")
+      .addText((text) =>
+        text
+          .setPlaceholder("Tasks.md")
+          .setValue(this.plugin.settings.appendFile ?? "")
+          .onChange(async (value) => {
+            this.plugin.settings.appendFile = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Append to file template")
+      .setDesc(
+        "The template to append the task to (defaults to '- [] [[{{fileName}}|{{taskId}}]] ➕{{date:YYYY-MM-DD}}')\n\nCan use `fileName` and `taskId` as placeholders.",
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("Enter the template to append the task to")
+          .setValue(this.plugin.settings.appendTemplate ?? "")
+          .onChange(async (value) => {
+            this.plugin.settings.appendTemplate = value;
+            await this.plugin.saveSettings();
+          }),
+      );
+  }
+}
+
+class CreateTaskModal extends Modal {
+  private titleInput: HTMLInputElement;
+  private submitButton: HTMLButtonElement;
+  private onSubmit: (title: string) => Promise<void>;
+
+  constructor(app: App, onSubmit: (title: string) => Promise<void>) {
+    super(app);
+    this.onSubmit = onSubmit;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+
+    // Create a container for the form
+    let formContainer = contentEl.createEl("div", {
+      cls: "todoodle-modal-container",
+    });
+
+    // Create the title input
+    this.titleInput = formContainer.createEl("input", {
+      type: "text",
+      placeholder: "Enter task title",
+      cls: "todoodle-title-input",
+    });
+
+    // Create the submit button
+    this.submitButton = formContainer.createEl("button", {
+      text: "Create Task",
+      cls: "todoodle-submit-button",
+    });
+
+    // Add event listeners
+    this.titleInput.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") {
+        await this.handleSubmit();
+      }
+    });
+
+    this.submitButton.addEventListener("click", async () => {
+      await this.handleSubmit();
+    });
+
+    // Focus the input
+    this.titleInput.focus();
+  }
+
+  private async handleSubmit() {
+    let title = this.titleInput.value.trim();
+    if (title) {
+      await this.onSubmit(title);
+      this.close();
+    }
+  }
+
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
   }
 }
