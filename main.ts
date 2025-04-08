@@ -2,8 +2,6 @@
 import dayjs from "dayjs";
 import {
   type App,
-  type Editor,
-  type MarkdownView,
   Modal,
   Notice,
   Plugin,
@@ -274,7 +272,9 @@ class TodoodleSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Tasks Directory")
-      .setDesc("The directory where tasks are stored (defaults to './tasks')")
+      .setDesc(
+        "The directory where tasks are stored (defaults to './tasks')\n\nNote: Changing this directory may throw off the aliases set on each task note! If you have tasks created, make sure to move them to this new directory.",
+      )
       .addText((text) =>
         text
           .setPlaceholder("Enter the directory where tasks are stored")
