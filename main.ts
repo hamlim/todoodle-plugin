@@ -336,7 +336,7 @@ class TodoodleSettingTab extends PluginSettingTab {
       .setDesc(
         "The template to append the task to (defaults to '- [] [[{{fileName}}|{{taskId}}]] ➕{{date:YYYY-MM-DD}}')\n\nCan use `fileName` and `taskId` as placeholders.",
       )
-      .addText((text) =>
+      .addTextArea((text) =>
         text
           .setPlaceholder("Enter the template to append the task to")
           .setValue(this.plugin.settings.appendTemplate ?? "")
