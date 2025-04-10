@@ -10,29 +10,59 @@ import {
   TFile,
 } from "obsidian";
 
+function formatDate(format: string) {
+  return dayjs().format(format);
+}
+
 function formatTemplateString(
   string: string,
-  replacements?: Record<string, string>,
+  replacer: (match: string, pattern: string) => string,
 ) {
-  return string.replace(/{{([^}}]+)}}/g, (match, pattern): string => {
-    // date or time
-    let replacementMatch = "";
-    let format = "";
+  return string.replace(/{{([^}}]+)}}/g, replacer);
+}
+
+function createTemplateReplacer({
+  title,
+  id,
+  fileName,
+  taskId,
+}: {
+  title: string;
+  id: string;
+  fileName?: string;
+  taskId?: string;
+}) {
+  return function templateReplacer(match: string, pattern: string) {
+    if (pattern === "title") {
+      return title;
+    }
+    if (pattern === "id") {
+      return id;
+    }
+    if (pattern === "fileName") {
+      return fileName;
+    }
+    if (pattern === "taskId") {
+      return taskId;
+    }
     if (pattern.includes(":")) {
-      [replacementMatch, format] = pattern.split(":");
-    } else {
-      replacementMatch = pattern;
+      let [replacementMatch, format] = pattern.split(":");
       if (replacementMatch === "date") {
-        format = "YYYY-MM-DD";
-      } else if (replacementMatch === "time") {
-        format = "hh-mm-ss";
-      } else {
-        // title or ID
-        return replacements?.[replacementMatch] ?? match;
+        return formatDate(format);
+      }
+      if (replacementMatch === "time") {
+        return formatDate(format);
+      }
+    } else {
+      if (pattern === "date") {
+        return formatDate("YYYY-MM-DD");
+      }
+      if (pattern === "time") {
+        return formatDate("hh-mm-ss");
       }
     }
-    return dayjs().format(format);
-  });
+    return match;
+  };
 }
 
 interface TodoodleSettings {
@@ -51,7 +81,7 @@ const DEFAULT_SETTINGS: TodoodleSettings = {
   taskFileName: "task-{{date:YYYY-MM-DD}}--{{time:hh-mm-ss}} - {{title}}.md",
   taskFileTemplate: "_templates/task.md",
   taskId: "TASK-{{id}}",
-  appendFile: "Tasks.md",
+  appendFile: "Inbox.md",
   appendTemplate: DEFAULT_TASK_TEMPLATE,
 };
 
@@ -76,10 +106,18 @@ export default class TodoodlePlugin extends Plugin {
       );
     let taskId = (taskFiles.length + 1).toString();
 
-    // Format the filename with the title
-    let fileName = formatTemplateString(this.settings.taskFileName, {
+    let templateReplacer = createTemplateReplacer({
       title,
+      id: taskId,
+      fileName: undefined,
+      taskId: undefined,
     });
+
+    // Format the filename with the title
+    let fileName = formatTemplateString(
+      this.settings.taskFileName,
+      templateReplacer,
+    );
     let filePath = `${this.settings.tasksDir}/${fileName}`;
 
     // Read and format the template
@@ -92,9 +130,10 @@ export default class TodoodlePlugin extends Plugin {
       );
     }
 
-    let hydratedTaskId = formatTemplateString(this.settings.taskId, {
-      id: taskId,
-    });
+    let hydratedTaskId = formatTemplateString(
+      this.settings.taskId,
+      templateReplacer,
+    );
 
     let templateContent = await this.app.vault.read(templateFile);
     let taskContent = templateContent.replace(
@@ -116,14 +155,17 @@ export default class TodoodlePlugin extends Plugin {
         );
       }
 
-      let appendedTask = formatTemplateString(this.settings.appendTemplate, {
-        fileName,
-        taskId: hydratedTaskId,
-      });
+      let appendedTask = formatTemplateString(
+        this.settings.appendTemplate,
+        createTemplateReplacer({
+          title,
+          id: taskId,
+          fileName,
+          taskId: hydratedTaskId,
+        }),
+      );
 
       new Notice(`Appending to ${appendToFile.path}: ${appendedTask}`);
-
-      console.log(`Appending to ${appendToFile.path}: ${appendedTask}`);
 
       await this.app.vault.append(appendToFile, `\n${appendedTask}`);
     }
@@ -134,41 +176,20 @@ export default class TodoodlePlugin extends Plugin {
   async onload() {
     await this.loadSettings();
 
-    // This creates an icon in the left ribbon.
-    const ribbonIconEl = this.addRibbonIcon(
-      "dice",
-      "Todoodle",
-      (evt: MouseEvent) => {
-        new CreateTaskModal(this.app, async (title: string) => {
-          try {
-            await this.createTask(title);
-          } catch (err) {
-            console.error(`[todoodle]: ${err.message}`);
-            new Notice(`Todoodle Error: ${err.message}`);
-          }
-        }).open();
-      },
-    );
-    // Perform additional things with the ribbon
-    // ribbonIconEl.addClass("my-plugin-ribbon-class");
+    this.addRibbonIcon("file-check-2", "Todoodle", () => {
+      new CreateTaskModal(this.app, async (title: string) => {
+        try {
+          await this.createTask(title);
+        } catch (err) {
+          console.error(`[todoodle]: ${err.message}`);
+          new Notice(`Todoodle Error: ${err.message}`);
+        }
+      }).open();
+    });
 
-    // This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-    // const statusBarItemEl = this.addStatusBarItem();
-    // statusBarItemEl.setText("Status Bar Text");
-
-    // This adds a simple command that can be triggered anywhere
-    // this.addCommand({
-    //   id: "open-sample-modal-simple",
-    //   name: "Open sample modal (simple)",
-    //   callback: () => {
-    //     new SampleModal(this.app).open();
-    //   },
-    // });
-    // This adds an editor command that can perform some operation on the current editor instance
     this.addCommand({
       id: "todoodle-create-task",
       name: "Create task",
-      //   editorCallback: (editor: Editor, view: MarkdownView) => {
       callback: () => {
         new CreateTaskModal(this.app, async (title: string) => {
           try {
@@ -180,46 +201,13 @@ export default class TodoodlePlugin extends Plugin {
         }).open();
       },
     });
-    // This adds a complex command that can check whether the current state of the app allows execution of the command
-    // this.addCommand({
-    //   id: "open-sample-modal-complex",
-    //   name: "Open sample modal (complex)",
-    //   checkCallback: (checking: boolean) => {
-    //     // Conditions to check
-    //     const markdownView =
-    //       this.app.workspace.getActiveViewOfType(MarkdownView);
-    //     if (markdownView) {
-    //       // If checking is true, we're simply "checking" if the command can be run.
-    //       // If checking is false, then we want to actually perform the operation.
-    //       if (!checking) {
-    //         new SampleModal(this.app).open();
-    //       }
 
-    //       // This command will only show up in Command Palette when the check function returns true
-    //       return true;
-    //     }
-    //   },
-    // });
-
-    // This adds a settings tab so the user can configure various aspects of the plugin
     this.addSettingTab(new TodoodleSettingTab(this.app, this));
-
-    // If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-    // Using this function will automatically remove the event listener when this plugin is disabled.
-    // this.registerDomEvent(document, "click", (evt: MouseEvent) => {
-    //   console.log("click", evt);
-    // });
-
-    // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-    // this.registerInterval(
-    //   window.setInterval(() => console.log("setInterval"), 5 * 60 * 1000),
-    // );
   }
 
   onunload() {}
 
   async loadSettings() {
-    // this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
     let loadedSettings = await this.loadData();
     this.settings = {
       ...DEFAULT_SETTINGS,
