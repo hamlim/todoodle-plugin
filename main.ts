@@ -349,8 +349,6 @@ class TodoodleSettingTab extends PluginSettingTab {
 }
 
 class CreateTaskModal extends Modal {
-  private titleInput: HTMLInputElement;
-  private submitButton: HTMLButtonElement;
   private onSubmit: (title: string) => Promise<void>;
 
   constructor(app: App, onSubmit: (title: string) => Promise<void>) {
@@ -359,52 +357,55 @@ class CreateTaskModal extends Modal {
   }
 
   onOpen() {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.contentEl.empty();
 
     // Create a container for the form
-    let formContainer = contentEl.createEl("div", {
+    let formContainer = this.contentEl.createEl("div", {
       cls: "todoodle-modal-container",
     });
 
     // Create the title input
-    this.titleInput = formContainer.createEl("input", {
+    let titleInput = formContainer.createEl("input", {
       type: "text",
       placeholder: "Enter task title",
       cls: "todoodle-title-input",
     });
 
     // Create the submit button
-    this.submitButton = formContainer.createEl("button", {
+    let submitButton = formContainer.createEl("button", {
       text: "Create Task",
       cls: "todoodle-submit-button",
     });
 
+    let { onSubmit, close: handleClose } = this;
+
+    let close = handleClose.bind(this);
+    let submit = onSubmit.bind(this);
+
+    let handleSubmit = async () => {
+      let title = titleInput.value.trim();
+      if (title) {
+        await submit(title);
+        close();
+      }
+    };
+
     // Add event listeners
-    this.titleInput.addEventListener("keydown", async (e) => {
+    titleInput.addEventListener("keydown", async (e) => {
       if (e.key === "Enter") {
-        await this.handleSubmit();
+        await handleSubmit();
       }
     });
 
-    this.submitButton.addEventListener("click", async () => {
-      await this.handleSubmit();
+    submitButton.addEventListener("click", async () => {
+      await handleSubmit();
     });
 
     // Focus the input
-    this.titleInput.focus();
-  }
-
-  private async handleSubmit() {
-    let title = this.titleInput.value.trim();
-    if (title) {
-      await this.onSubmit(title);
-      this.close();
-    }
+    titleInput.focus();
   }
 
   onClose() {
-    const { contentEl } = this;
-    contentEl.empty();
+    this.contentEl.empty();
   }
 }
